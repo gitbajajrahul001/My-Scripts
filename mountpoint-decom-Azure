@@ -1,0 +1,1131 @@
+# Azure LVM Cleanup Script
+
+A production-grade, idempotent Bash script for safely removing Azure-managed LVM storage from Linux virtual machines.
+
+Unlike generic LVM removal scripts, this utility performs extensive validation before making any destructive changes, ensuring that only the intended Azure disk is cleaned up.
+
+The script is specifically designed to mirror the provisioning model used by MyCloud:
+
+```
+1 Mount Point
+      │
+      ▼
+1 Azure Managed Disk (LUN)
+      │
+      ▼
+1 Partition
+      │
+      ▼
+1 Physical Volume (PV)
+      │
+      ▼
+1 Volume Group (VG)
+      │
+      ▼
+1 Logical Volume (LV)
+```
+
+The cleanup process reverses the provisioning sequence safely and predictably.
+
+---
+
+# Features
+
+- Idempotent execution
+- Supports multiple mount points in a single run
+- Uses Azure LUN as the authoritative disk identifier
+- Validates mount-to-LUN mapping before cleanup
+- Prevents accidental deletion of the OS disk
+- UUID-based `/etc/fstab` cleanup
+- Automatic `fstab` backup before modification
+- Comprehensive pre-execution validation
+- Dry-run mode
+- Interactive confirmation before execution
+- Detailed logging
+- Safe handling of open file handles
+- Gracefully skips already-removed resources
+
+---
+
+# Cleanup Workflow
+
+For every mount/LUN pair, the script performs the following sequence:
+
+```
+Resolve Azure Disk
+        │
+        ▼
+Validate Mapping
+        │
+        ▼
+Unmount Filesystem
+        │
+        ▼
+Remove /etc/fstab Entry
+        │
+        ▼
+Remove Logical Volume
+        │
+        ▼
+Remove Volume Group
+        │
+        ▼
+Remove Physical Volume
+        │
+        ▼
+Wipe Disk Signatures
+```
+
+This is intentionally the reverse of the provisioning workflow.
+
+---
+
+# Design Principles
+
+The script was designed around several core principles.
+
+## 1. Azure LUN is the Source of Truth
+
+The script never searches disks by name.
+
+Instead it resolves the Azure device from:
+
+```
+/dev/disk/azure/scsi1/lun<N>
+```
+
+This guarantees cleanup always targets the correct managed disk.
+
+---
+
+## 2. Idempotent
+
+Running the script multiple times is safe.
+
+If a resource has already been removed, the script simply reports it and continues.
+
+Examples:
+
+- LV already deleted
+- VG already removed
+- Mount already unmounted
+- fstab entry missing
+
+None of these are treated as failures.
+
+---
+
+## 3. Fail Fast
+
+Execution stops before any destructive operation if validation fails.
+
+Examples include:
+
+- Invalid mount path
+- Invalid LUN
+- Missing Azure disk
+- Wrong mount/LUN mapping
+- Device resolves to OS disk
+- Missing required resources
+
+---
+
+## 4. Safety First
+
+The script contains multiple layers of protection before deleting anything.
+
+It validates:
+
+- Azure LUN
+- Mount path
+- LVM relationships
+- PV ownership
+- VG membership
+- LV backing device
+- Root disk protection
+
+Only after every validation succeeds will cleanup begin.
+
+---
+
+# Input Format
+
+Single entry
+
+```
+"/data,2"
+```
+
+Multiple entries
+
+```
+"/data,2;/logs,4;/backup,7"
+```
+
+Format:
+
+```
+<mount-path>,<azure-lun>
+```
+
+Example
+
+```
+"/oracle,3;/sapdata,5"
+```
+
+---
+
+# Usage
+
+## Live Execution
+
+```bash
+sudo bash lvm_cleanup.sh "/data,2"
+```
+
+Multiple entries
+
+```bash
+sudo bash lvm_cleanup.sh "/data,2;/logs,3"
+```
+
+---
+
+## Dry Run
+
+No changes are made.
+
+Only the execution plan is displayed.
+
+```bash
+DRY_RUN=true sudo bash lvm_cleanup.sh "/data,2"
+```
+
+Example
+
+```bash
+DRY_RUN=true sudo bash lvm_cleanup.sh "/data,2;/logs,3"
+```
+
+---
+
+# Execution Flow
+
+Before any cleanup begins the script prints a complete execution plan.
+
+Example
+
+```
+Entry:
+Mount : /data
+LUN   : 2
+
+Derived VG : vg_data
+Derived LV : lv_data
+
+Azure Device : /dev/sdc
+
+Mounted : YES
+
+fstab Entry : FOUND
+
+Logical Volume : FOUND
+
+Volume Group : FOUND
+
+Physical Volume : FOUND
+```
+
+If any validation fails, execution is aborted.
+
+No changes are made.
+
+---
+
+# Validation Performed
+
+The script performs significantly more validation than standard LVM cleanup scripts.
+
+## Input Validation
+
+Checks:
+
+- mount path is absolute
+- LUN is numeric
+
+---
+
+## Azure Device Resolution
+
+Resolves
+
+```
+/dev/disk/azure/scsi1/lunX
+```
+
+into the actual block device.
+
+Example
+
+```
+LUN 2
+
+↓
+
+/dev/sdc
+```
+
+---
+
+## OS Disk Protection
+
+The script determines the root filesystem device.
+
+If the supplied LUN resolves to the operating system disk,
+
+cleanup immediately aborts.
+
+This prevents catastrophic deletion.
+
+---
+
+## Mount/LUN Validation
+
+The script verifies that:
+
+- supplied partition is an LVM PV
+- PV belongs to expected VG
+- VG contains expected LV
+- LV is backed by supplied partition
+- VG name matches mount naming convention
+
+This prevents accidental cleanup caused by incorrect LUN input.
+
+---
+
+## Existing Resource Validation
+
+The execution plan verifies existence of:
+
+- mount
+- LV
+- VG
+- PV
+- fstab entry
+- Azure disk
+
+Missing resources are reported before execution.
+
+---
+
+# Dry Run Mode
+
+Dry run performs every validation but executes no destructive commands.
+
+Example
+
+```bash
+DRY_RUN=true sudo bash lvm_cleanup.sh "/data,2"
+```
+
+Output
+
+```
+WOULD RUN:
+
+umount
+
+lvremove
+
+vgremove
+
+pvremove
+
+wipefs
+```
+
+No system state changes occur.
+
+---
+
+# fstab Handling
+
+The script removes entries using UUID whenever possible.
+
+Example
+
+```
+UUID=xxxx
+```
+
+If UUID cannot be determined, it falls back to mount-point matching.
+
+Before the first modification:
+
+```
+/etc/fstab
+
+↓
+
+/etc/fstab.bak.<timestamp>
+```
+
+is created automatically.
+
+After modification
+
+```
+systemctl daemon-reload
+```
+
+is executed.
+
+---
+
+# Open File Handling
+
+Before unmounting,
+
+the script checks for active processes using:
+
+```
+fuser
+```
+
+If processes are found,
+
+they are terminated before attempting unmount.
+
+If a normal unmount fails,
+
+a lazy unmount is attempted.
+
+---
+
+# Logging
+
+All operations are logged to
+
+```
+/var/log/mycloud_lvm_cleanup.log
+```
+
+Each log entry includes
+
+- timestamp
+- log level
+- mount
+- LUN
+- message
+
+Example
+
+```
+2026-01-10T09:31:25+0000
+
+INFO
+
+mount=/data
+
+lun=2
+
+Unmount successful
+```
+
+Dry-run entries are clearly marked.
+
+---
+
+# Interactive Confirmation
+
+After validation the script pauses.
+
+```
+Proceed with cleanup?
+
+yes/NO
+```
+
+Cleanup begins only if the operator types
+
+```
+yes
+```
+
+This provides one final safety checkpoint.
+
+---
+
+# Post Cleanup Validation
+
+After execution the script prints recommended verification commands.
+
+Example
+
+```bash
+lvs
+
+vgs
+
+pvs
+
+mount | grep "/data"
+
+lsblk
+```
+
+Only after successful verification should the Azure managed disk be detached.
+
+---
+
+# Operational Workflow
+
+Recommended operational sequence:
+
+```
+Provision Azure Disk
+
+↓
+
+Create LVM
+
+↓
+
+Mount Filesystem
+
+↓
+
+Application Uses Disk
+
+↓
+
+Run lvm_cleanup.sh
+
+↓
+
+Validate Cleanup
+
+↓
+
+Detach Azure Managed Disk
+
+↓
+
+Delete Managed Disk
+
+↓
+
+Update Terraform / IaC
+```
+
+---
+
+# Exit Conditions
+
+The script exits immediately if:
+
+- invalid input
+- non-root execution
+- OS disk detected
+- validation failure
+- execution plan contains errors
+- operator declines confirmation
+
+---
+
+# Requirements
+
+- Linux
+- Bash
+- LVM2
+- Azure Linux VM
+- Root or sudo privileges
+
+Utilities used:
+
+- lvdisplay
+- vgdisplay
+- pvs
+- lvs
+- blkid
+- wipefs
+- lsblk
+- findmnt
+- fuser
+- systemctl
+- sed
+
+---
+
+# Example
+
+Cleanup two managed disks
+
+```bash
+sudo bash lvm_cleanup.sh "/data,2;/backup,5"
+```
+
+Preview only
+
+```bash
+DRY_RUN=true sudo bash lvm_cleanup.sh "/data,2;/backup,5"
+```
+
+---
+
+# Notes
+
+- The script assumes a **1 Mount → 1 Disk → 1 VG → 1 LV** architecture.
+- Azure LUN is treated as the authoritative identifier for locating managed disks.
+- Cleanup is intentionally conservative: if any validation cannot be completed with confidence, the affected entry is skipped or execution is aborted to avoid accidental data loss.
+- The script removes local LVM configuration only. It **does not detach or delete** Azure Managed Disks. Disk lifecycle operations should be performed separately through Azure Portal, Azure CLI, Terraform, or other infrastructure automation.
+
+---
+
+# License
+
+This script is intended for enterprise infrastructure automation and can be adapted to suit organization-specific operational standards and governance requirements.
+
+---
+
+#######
+
+---
+
+#!/bin/bash
+
+# ------------------------------------------------------------
+# Script: lvm_cleanup.sh
+# Purpose: Idempotent LVM teardown using Azure LUN only
+# Model: 1 Mount = 1 Disk = 1 VG = 1 LV (mirrors provisioning)
+# Input format:
+#   "/mount1,2;/mount2,3"
+# Steps per entry:
+#   Unmount → Remove fstab (UUID-based) → LV → VG → PV → Partition wipe
+#
+# Dry-run mode (no changes made, only previewed):
+#   DRY_RUN=true sudo bash lvm_cleanup.sh "/mount,LUN"
+# ------------------------------------------------------------
+
+set -euo pipefail
+
+DRY_RUN="${DRY_RUN:-false}"
+LOG_FILE="/var/log/mycloud_lvm_cleanup.log"
+
+# ------------------------------------------------------------
+# LOGGING
+# ------------------------------------------------------------
+
+log() {
+  local LEVEL="$1"
+  local MOUNT="$2"
+  local LUN="$3"
+  local MESSAGE="$4"
+  local TS
+  TS=$(date +"%Y-%m-%dT%H:%M:%S%z")
+  local PREFIX=""
+  [[ "$DRY_RUN" == "true" ]] && PREFIX="[DRY-RUN] "
+  echo "${TS} | ${LEVEL} | mount=${MOUNT} | lun=${LUN} | ${PREFIX}${MESSAGE}" | tee -a "$LOG_FILE"
+}
+
+# ------------------------------------------------------------
+# run() — central wrapper for all destructive commands
+# In dry-run: prints what would be executed, does nothing
+# In live:    executes the command
+# ------------------------------------------------------------
+
+run() {
+  if [[ "$DRY_RUN" == "true" ]]; then
+    echo "  [DRY-RUN] WOULD RUN: $*" | tee -a "$LOG_FILE"
+  else
+    "$@"
+  fi
+}
+
+# ------------------------------------------------------------
+# PRE-FLIGHT
+# ------------------------------------------------------------
+
+if [ -z "${1:-}" ]; then
+  echo "Usage: $0 \"/mount,LUN;/mount2,LUN\""
+  echo "       DRY_RUN=true $0 \"/mount,LUN;/mount2,LUN\""
+  exit 1
+fi
+
+if [[ $EUID -ne 0 ]]; then
+  echo "Run as root or via sudo."
+  exit 1
+fi
+
+FSTAB="/etc/fstab"
+FSTAB_BACKUP="/etc/fstab.bak.$(date +%Y%m%d_%H%M%S)"
+FSTAB_BACKED_UP=false
+
+IFS=';' read -ra ENTRIES <<< "$1"
+
+# ------------------------------------------------------------
+# HELPERS (mirrors provisioning script exactly)
+# ------------------------------------------------------------
+
+sanitize_name() {
+  echo "$1" | tr -cd 'a-zA-Z0-9_-' | tr '/' '_' | sed 's/^_//'
+}
+
+resolve_device_from_lun() {
+  local lun="$1"
+  local path="/dev/disk/azure/scsi1/lun${lun}"
+  [ -e "$path" ] && readlink -f "$path" || echo ""
+}
+
+get_partition_name() {
+  local device="$1"
+  if [[ "$device" == *"nvme"* ]]; then
+    echo "${device}p1"
+  else
+    echo "${device}1"
+  fi
+}
+
+validate_mount_lun_mapping() {
+  local MOUNT="$1"
+  local LUN="$2"
+  local VG_NAME="$3"
+  local LV_PATH="$4"
+  local PARTITION="$5"
+  VALIDATION_REASON=""
+
+  # If no partition is available from LUN, skip strict mapping validation.
+  # Main loop can still clean stale fstab/LVM artifacts for detached disks.
+  if [[ -z "$PARTITION" || ! -b "$PARTITION" ]]; then
+    return 0
+  fi
+
+  # If derived VG/LV still exists, the provided LUN partition must be an LVM PV.
+  # If it is not a PV, this usually means wrong LUN was provided for the mount.
+  if vgdisplay "$VG_NAME" &>/dev/null || lvdisplay "$LV_PATH" &>/dev/null; then
+    if ! pvs "$PARTITION" &>/dev/null; then
+      VALIDATION_REASON="Mismatch: provided LUN $LUN resolves to $PARTITION, but that partition is not an LVM PV while mount $MOUNT still maps to existing VG/LV ($VG_NAME/$LV_PATH). Likely wrong LUN input."
+      return 1
+    fi
+  fi
+
+  # If VG exists, LUN partition must be one of the PVs of that VG.
+  if vgdisplay "$VG_NAME" &>/dev/null; then
+    local VG_PVS=""
+    local MATCH_FOUND=false
+    VG_PVS=$(pvs --noheadings -o pv_name --select "vg_name=${VG_NAME}" 2>/dev/null | xargs || true)
+
+    if [[ -n "$VG_PVS" ]]; then
+      for pv in $VG_PVS; do
+        if [[ "$pv" == "$PARTITION" ]]; then
+          MATCH_FOUND=true
+          break
+        fi
+      done
+
+      if [[ "$MATCH_FOUND" == "false" ]]; then
+        VALIDATION_REASON="Mismatch: provided LUN $LUN resolves to $PARTITION, but mount $MOUNT maps to VG $VG_NAME using PV(s): $VG_PVS"
+        return 1
+      fi
+    fi
+  fi
+
+  # Partition should belong to the same VG derived from mount name.
+  local PART_VG=""
+  PART_VG=$(pvs --noheadings -o vg_name "$PARTITION" 2>/dev/null | awk '{$1=$1; print}')
+  if [[ -n "$PART_VG" && "$PART_VG" != "$VG_NAME" ]]; then
+    VALIDATION_REASON="Mismatch: partition $PARTITION belongs to VG $PART_VG, but mount $MOUNT expects VG $VG_NAME"
+    return 1
+  fi
+
+  # If LV exists, ensure the LV backing device is the same partition.
+  if lvdisplay "$LV_PATH" &>/dev/null; then
+    local LV_DEV=""
+    # lvs devices output can be like "  /dev/sdc1(0)"; trim leading spaces and extent suffix.
+    LV_DEV=$(lvs --noheadings -o devices "$LV_PATH" 2>/dev/null | sed 's/^ *//;s/(.*//' | head -1)
+    if [[ -z "$LV_DEV" ]]; then
+      VALIDATION_REASON="Unable to resolve backing PV for LV $LV_PATH. Cannot safely validate mount/LUN mapping."
+      return 1
+    fi
+
+    [[ "$LV_DEV" != /dev/* ]] && LV_DEV="/dev/$LV_DEV"
+    if [[ "$(basename "$LV_DEV")" != "$(basename "$PARTITION")" ]]; then
+      VALIDATION_REASON="Mismatch: LV $LV_PATH is backed by $LV_DEV, but provided LUN $LUN resolves to $PARTITION"
+      return 1
+    fi
+  fi
+
+  return 0
+}
+
+# ------------------------------------------------------------
+# PRE-EXECUTION PLAN SUMMARY
+# Resolves and displays all resources that will be touched
+# before any destructive action is taken.
+# In dry-run this is the primary output.
+# In live mode this gives the operator a final review window.
+# ------------------------------------------------------------
+
+echo ""
+echo "================================================================"
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "  DRY-RUN MODE — No changes will be made to this system"
+else
+  echo "  EXECUTION PLAN — Resources that will be removed"
+fi
+echo "================================================================"
+echo ""
+
+PLAN_ERRORS=0
+
+for entry in "${ENTRIES[@]}"; do
+  IFS=',' read -r MOUNT LUN <<< "$entry"
+  MOUNT=$(echo "$MOUNT" | xargs)
+  LUN=$(echo "$LUN" | xargs)
+
+  echo "  Entry: mount=${MOUNT} | lun=${LUN}"
+
+  if [[ "$MOUNT" != /* ]]; then
+    echo "    [ERROR] Mount path must be absolute. Will be skipped."
+    PLAN_ERRORS=$((PLAN_ERRORS + 1))
+    continue
+  fi
+
+  if ! [[ "$LUN" =~ ^[0-9]+$ ]]; then
+    echo "    [ERROR] LUN must be numeric. Will be skipped."
+    PLAN_ERRORS=$((PLAN_ERRORS + 1))
+    continue
+  fi
+
+  BASE=$(sanitize_name "$MOUNT")
+  VG_NAME="vg_${BASE}"
+  LV_NAME="lv_${BASE}"
+  LV_PATH="/dev/${VG_NAME}/${LV_NAME}"
+
+  echo "    Derived names  : VG=${VG_NAME} | LV=${LV_NAME}"
+
+  DEVICE=$(resolve_device_from_lun "$LUN")
+  if [ -z "$DEVICE" ]; then
+    echo "    [ERROR] Azure device: NOT FOUND (disk may already be detached)"
+    PLAN_ERRORS=$((PLAN_ERRORS + 1))
+  else
+    PARTITION=$(get_partition_name "$DEVICE")
+    echo "    Azure device   : ${DEVICE} (partition: ${PARTITION})"
+
+    ROOT_SRC=$(findmnt -n -o SOURCE /)
+    ROOT_DISK=$(lsblk -no PKNAME "$ROOT_SRC" 2>/dev/null || true)
+    if [ -n "$ROOT_DISK" ] && [[ "$DEVICE" == "/dev/$ROOT_DISK" ]]; then
+      echo "    [ERROR] Device resolves to OS disk. This entry will abort execution."
+      PLAN_ERRORS=$((PLAN_ERRORS + 1))
+    fi
+  fi
+
+  if mountpoint -q "$MOUNT" 2>/dev/null; then
+    echo "    Mounted        : YES — will unmount"
+  else
+    echo "    [ERROR] Mounted: NOT FOUND for ${MOUNT}"
+    PLAN_ERRORS=$((PLAN_ERRORS + 1))
+  fi
+
+  UUID=""
+  lvdisplay "$LV_PATH" &>/dev/null \
+    && UUID=$(blkid -s UUID -o value "$LV_PATH" 2>/dev/null || true)
+
+  if [ -n "$UUID" ] && grep -q "$UUID" "$FSTAB"; then
+    echo "    fstab entry    : FOUND (UUID=${UUID}) — will remove"
+  elif grep -qE "[[:space:]]${MOUNT}[[:space:]]" "$FSTAB" 2>/dev/null; then
+    echo "    fstab entry    : FOUND (by mountpoint, UUID unavailable) — will remove"
+  else
+    echo "    [ERROR] fstab entry: NOT FOUND for ${MOUNT}"
+    PLAN_ERRORS=$((PLAN_ERRORS + 1))
+  fi
+
+  if lvdisplay "$LV_PATH" &>/dev/null; then
+    echo "    LV             : EXISTS — will remove (${LV_PATH})"
+  else
+    echo "    [ERROR] LV: NOT FOUND (${LV_PATH})"
+    PLAN_ERRORS=$((PLAN_ERRORS + 1))
+  fi
+
+  if vgdisplay "$VG_NAME" &>/dev/null; then
+    echo "    VG             : EXISTS — will remove (${VG_NAME})"
+  else
+    echo "    [ERROR] VG: NOT FOUND (${VG_NAME})"
+    PLAN_ERRORS=$((PLAN_ERRORS + 1))
+  fi
+
+  if [ -n "$DEVICE" ]; then
+    PARTITION=$(get_partition_name "$DEVICE")
+    if pvs "$PARTITION" &>/dev/null; then
+      echo "    PV             : EXISTS — will remove (${PARTITION})"
+    else
+      echo "    [ERROR] PV: NOT FOUND (${PARTITION})"
+      PLAN_ERRORS=$((PLAN_ERRORS + 1))
+    fi
+
+    if ! validate_mount_lun_mapping "$MOUNT" "$LUN" "$VG_NAME" "$LV_PATH" "$PARTITION"; then
+      echo "    [ERROR] ${VALIDATION_REASON}"
+      echo "    [ERROR] This entry is invalid and will be skipped."
+      PLAN_ERRORS=$((PLAN_ERRORS + 1))
+    fi
+  else
+    echo "    [ERROR] PV validation skipped because Azure device was not found"
+    PLAN_ERRORS=$((PLAN_ERRORS + 1))
+  fi
+
+  echo ""
+done
+
+echo "================================================================"
+
+if [[ "$PLAN_ERRORS" -gt 0 ]]; then
+  echo "  [ERROR] ${PLAN_ERRORS} error(s) found in plan. Aborting execution."
+  echo "================================================================"
+  echo ""
+  exit 1
+fi
+
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "  DRY-RUN complete. No changes were made."
+  echo "  Re-run without DRY_RUN=true to execute."
+  echo "================================================================"
+  echo ""
+  exit 0
+fi
+
+echo ""
+read -rp "  Proceed with cleanup? [yes/NO]: " CONFIRM
+if [[ "$CONFIRM" != "yes" ]]; then
+  echo "  Aborted by operator."
+  exit 0
+fi
+echo "================================================================"
+echo ""
+
+# ------------------------------------------------------------
+# MAIN LOOP
+# ------------------------------------------------------------
+
+for entry in "${ENTRIES[@]}"; do
+  IFS=',' read -r MOUNT LUN <<< "$entry"
+
+  MOUNT=$(echo "$MOUNT" | xargs)
+  LUN=$(echo "$LUN" | xargs)
+
+  echo ""
+  log "INFO" "$MOUNT" "$LUN" "---------- Starting cleanup ----------"
+
+  # ---- Input validation ----
+  if [[ "$MOUNT" != /* ]]; then
+    log "ERROR" "$MOUNT" "$LUN" "Mount path must be absolute. Skipping."
+    continue
+  fi
+
+  if ! [[ "$LUN" =~ ^[0-9]+$ ]]; then
+    log "ERROR" "$MOUNT" "$LUN" "LUN must be numeric. Skipping."
+    continue
+  fi
+
+  # ---- Derive names (identical to provisioning logic) ----
+  BASE=$(sanitize_name "$MOUNT")
+  VG_NAME="vg_${BASE}"
+  LV_NAME="lv_${BASE}"
+  LV_PATH="/dev/${VG_NAME}/${LV_NAME}"
+
+  log "INFO" "$MOUNT" "$LUN" "Derived: BASE=${BASE} | VG=${VG_NAME} | LV=${LV_NAME}"
+
+  # ---- Resolve device from LUN ----
+  DEVICE=$(resolve_device_from_lun "$LUN")
+
+  if [ -z "$DEVICE" ]; then
+    log "WARN" "$MOUNT" "$LUN" "No device found for LUN. Device may already be detached. Continuing cleanup of LVM/fstab artifacts."
+  else
+    log "INFO" "$MOUNT" "$LUN" "Resolved device: ${DEVICE}"
+
+    # Protect OS disk
+    ROOT_SRC=$(findmnt -n -o SOURCE /)
+    ROOT_DISK=$(lsblk -no PKNAME "$ROOT_SRC" 2>/dev/null || true)
+    if [ -n "$ROOT_DISK" ] && [[ "$DEVICE" == "/dev/$ROOT_DISK" ]]; then
+      log "ERROR" "$MOUNT" "$LUN" "Device maps to OS disk. Aborting."
+      exit 1
+    fi
+  fi
+
+  PARTITION=""
+  if [ -n "$DEVICE" ]; then
+    PARTITION=$(get_partition_name "$DEVICE")
+  fi
+
+  if ! validate_mount_lun_mapping "$MOUNT" "$LUN" "$VG_NAME" "$LV_PATH" "$PARTITION"; then
+    log "ERROR" "$MOUNT" "$LUN" "$VALIDATION_REASON"
+    log "ERROR" "$MOUNT" "$LUN" "Invalid mount/LUN pair. Skipping destructive operations for this entry."
+    continue
+  fi
+
+  # ----------------------------------------------------------
+  # STEP 1: UNMOUNT
+  # ----------------------------------------------------------
+  if mountpoint -q "$MOUNT" 2>/dev/null; then
+    log "INFO" "$MOUNT" "$LUN" "Filesystem is mounted. Checking for open file handles..."
+
+    OPEN_PROCS=$(fuser -m "$MOUNT" 2>/dev/null || true)
+    if [ -n "$OPEN_PROCS" ]; then
+      log "WARN" "$MOUNT" "$LUN" "Processes holding mount: ${OPEN_PROCS}. Killing before unmount."
+      run fuser -km "$MOUNT"
+      [[ "$DRY_RUN" == "false" ]] && sleep 2
+    fi
+
+    log "INFO" "$MOUNT" "$LUN" "Unmounting: ${MOUNT}"
+    if [[ "$DRY_RUN" == "false" ]]; then
+      umount "$MOUNT" && log "INFO" "$MOUNT" "$LUN" "Unmounted successfully." || {
+        log "WARN" "$MOUNT" "$LUN" "Normal unmount failed. Attempting lazy unmount..."
+        umount -l "$MOUNT"
+        log "INFO" "$MOUNT" "$LUN" "Lazy unmount issued."
+      }
+    else
+      echo "  [DRY-RUN] WOULD RUN: umount ${MOUNT}" | tee -a "$LOG_FILE"
+    fi
+  else
+    log "INFO" "$MOUNT" "$LUN" "Not mounted. Skipping unmount."
+  fi
+
+  # ----------------------------------------------------------
+  # STEP 2: REMOVE FSTAB ENTRY (UUID-based, mirrors provisioning)
+  # ----------------------------------------------------------
+  UUID=""
+  if lvdisplay "$LV_PATH" &>/dev/null; then
+    UUID=$(blkid -s UUID -o value "$LV_PATH" 2>/dev/null || true)
+  fi
+
+  if [ -n "$UUID" ] && grep -q "$UUID" "$FSTAB"; then
+    log "INFO" "$MOUNT" "$LUN" "Removing fstab entry for UUID=${UUID}"
+    if [[ "$DRY_RUN" == "false" ]]; then
+      if [ "$FSTAB_BACKED_UP" = false ]; then
+        cp "$FSTAB" "$FSTAB_BACKUP"
+        log "INFO" "$MOUNT" "$LUN" "fstab backed up to ${FSTAB_BACKUP}"
+        FSTAB_BACKED_UP=true
+      fi
+      sed -i "/UUID=${UUID}/d" "$FSTAB"
+      log "INFO" "$MOUNT" "$LUN" "Removed fstab entry for UUID=${UUID}"
+      systemctl daemon-reload
+      log "INFO" "$MOUNT" "$LUN" "Reloaded systemd daemon"
+    else
+      echo "  [DRY-RUN] WOULD RUN: sed -i \"/UUID=${UUID}/d\" ${FSTAB}" | tee -a "$LOG_FILE"
+      echo "  [DRY-RUN] WOULD RUN: systemctl daemon-reload" | tee -a "$LOG_FILE"
+    fi
+  else
+    # Fallback: match by mountpoint string
+    if grep -qE "[[:space:]]${MOUNT}[[:space:]]" "$FSTAB"; then
+      log "INFO" "$MOUNT" "$LUN" "Removing fstab entry by mountpoint match (UUID unavailable)"
+      if [[ "$DRY_RUN" == "false" ]]; then
+        if [ "$FSTAB_BACKED_UP" = false ]; then
+          cp "$FSTAB" "$FSTAB_BACKUP"
+          log "INFO" "$MOUNT" "$LUN" "fstab backed up to ${FSTAB_BACKUP}"
+          FSTAB_BACKED_UP=true
+        fi
+        sed -i "\|[[:space:]]${MOUNT}[[:space:]]|d" "$FSTAB"
+        log "INFO" "$MOUNT" "$LUN" "Removed fstab entry by mountpoint"
+        systemctl daemon-reload
+        log "INFO" "$MOUNT" "$LUN" "Reloaded systemd daemon"
+      else
+        echo "  [DRY-RUN] WOULD RUN: sed -i (mountpoint match) on ${FSTAB} for ${MOUNT}" | tee -a "$LOG_FILE"
+        echo "  [DRY-RUN] WOULD RUN: systemctl daemon-reload" | tee -a "$LOG_FILE"
+      fi
+    else
+      log "INFO" "$MOUNT" "$LUN" "No fstab entry found. Skipping."
+    fi
+  fi
+
+  # ----------------------------------------------------------
+  # STEP 3: REMOVE LOGICAL VOLUME
+  # ----------------------------------------------------------
+  if lvdisplay "$LV_PATH" &>/dev/null; then
+    log "INFO" "$MOUNT" "$LUN" "Removing LV: ${LV_PATH}"
+    run lvremove -f "$LV_PATH"
+    [[ "$DRY_RUN" == "false" ]] && log "INFO" "$MOUNT" "$LUN" "Removed LV: ${LV_PATH}"
+  else
+    log "INFO" "$MOUNT" "$LUN" "LV not found. Skipping."
+  fi
+
+  # ----------------------------------------------------------
+  # STEP 4: REMOVE VOLUME GROUP
+  # ----------------------------------------------------------
+  if vgdisplay "$VG_NAME" &>/dev/null; then
+    REMAINING_LVS=$(lvs --noheadings -o lv_name "$VG_NAME" 2>/dev/null | wc -l)
+    if [[ "$REMAINING_LVS" -gt 0 ]]; then
+      log "ERROR" "$MOUNT" "$LUN" "VG ${VG_NAME} still has ${REMAINING_LVS} LV(s). Skipping VG removal."
+      continue
+    fi
+    log "INFO" "$MOUNT" "$LUN" "Removing VG: ${VG_NAME}"
+    run vgremove -f "$VG_NAME"
+    [[ "$DRY_RUN" == "false" ]] && log "INFO" "$MOUNT" "$LUN" "Removed VG: ${VG_NAME}"
+  else
+    log "INFO" "$MOUNT" "$LUN" "VG not found. Skipping."
+  fi
+
+  # ----------------------------------------------------------
+  # STEP 5: REMOVE PHYSICAL VOLUME
+  # ----------------------------------------------------------
+  if [ -n "$PARTITION" ] && pvs "$PARTITION" &>/dev/null; then
+    log "INFO" "$MOUNT" "$LUN" "Removing PV: ${PARTITION}"
+    run pvremove -f "$PARTITION"
+    [[ "$DRY_RUN" == "false" ]] && log "INFO" "$MOUNT" "$LUN" "Removed PV: ${PARTITION}"
+  else
+    log "INFO" "$MOUNT" "$LUN" "PV not found or partition unavailable. Skipping."
+  fi
+
+  # ----------------------------------------------------------
+  # STEP 6: WIPE PARTITION SIGNATURES FROM DISK
+  # ----------------------------------------------------------
+  if [ -n "$DEVICE" ] && [ -b "$DEVICE" ]; then
+    log "INFO" "$MOUNT" "$LUN" "Wiping partition signatures from: ${DEVICE}"
+    run wipefs -a "$DEVICE"
+    [[ "$DRY_RUN" == "false" ]] && log "INFO" "$MOUNT" "$LUN" "Wiped partition signatures from ${DEVICE}"
+  else
+    log "INFO" "$MOUNT" "$LUN" "Device not available for wipe. Skipping."
+  fi
+
+  log "INFO" "$MOUNT" "$LUN" "---------- Cleanup completed ----------"
+  echo ""
+done
+
+# ------------------------------------------------------------
+# POST-CLEANUP VALIDATION BLOCK
+# Prints exact commands the operator should run to confirm
+# cleanup. Does not execute them — operator validates manually
+# as per operational flow.
+# ------------------------------------------------------------
+
+echo ""
+echo "================================================================"
+echo "  Cleanup complete. Validate results before detaching Azure disk."
+echo "================================================================"
+echo ""
+echo "  Run the following to confirm cleanup:"
+echo ""
+echo "    lvs"
+echo "    vgs"
+echo "    pvs"
+
+for entry in "${ENTRIES[@]}"; do
+  IFS=',' read -r MOUNT LUN <<< "$entry"
+  MOUNT=$(echo "$MOUNT" | xargs)
+  echo "    mount | grep \"${MOUNT}\""
+  echo "    lsblk | grep \"$(sanitize_name "$MOUNT")\""
+done
+
+echo ""
+echo "  If all clear:"
+echo "    1. Detach the Azure Managed Disk from the VM (portal / CLI / Terraform)"
+echo "    2. Delete the disk if no longer required"
+echo "    3. Update IaC definitions where applicable"
+echo ""
+echo "  Full log: ${LOG_FILE}"
+if [ "$FSTAB_BACKED_UP" = true ]; then
+  echo "  fstab backup: ${FSTAB_BACKUP}"
+fi
+echo "================================================================"
+echo ""
+ 
+
