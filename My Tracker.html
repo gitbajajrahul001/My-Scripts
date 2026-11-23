@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>My Tracker</title>
+<style>
+:root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#202938;background:#f5f7fa}
+*{box-sizing:border-box}body{margin:0;padding:24px}main{max-width:1200px;margin:auto}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+h1{font-size:24px;margin:0 0 5px}.sub{color:#687386;font-size:13px}
+button,.btn{border:1px solid #cbd3df;background:white;color:#263449;padding:9px 13px;border-radius:8px;cursor:pointer;font-size:13px}
+button.primary{background:#205b91;color:white;border-color:#205b91}button.danger{color:#a12d2d}
+button:hover{filter:brightness(.97)}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.stat,.panel{background:white;border:1px solid #e1e6ed;border-radius:12px;padding:15px}
+.stat strong{display:block;font-size:25px;margin-bottom:3px}.stat span{color:#697586;font-size:12px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.toolbar input,.toolbar select{min-width:160px}
+input,select,textarea{font:inherit;border:1px solid #cbd3df;border-radius:7px;padding:9px;background:white;color:#202938}
+.table-wrap{overflow:auto;background:white;border:1px solid #e1e6ed;border-radius:12px}
+table{border-collapse:collapse;width:100%;min-width:760px}th,td{text-align:left;padding:12px 13px;border-bottom:1px solid #edf0f4;font-size:13px;vertical-align:top}
+th{background:#f8fafc;color:#526174;font-size:11px;text-transform:uppercase;letter-spacing:.04em;position:sticky;top:0}
+tr:last-child td{border-bottom:0}
+.cell-input{width:100%;min-width:95px;border:1px solid #d7dee8;background:#ffffffaa;padding:7px 6px;border-radius:5px;font-size:13px}
+.cell-input:hover{border-color:#aebdce;background:#fff}.cell-input[data-field="project"],.cell-input[data-field="owner"]{min-width:125px;cursor:text}
+.cell-input:focus{outline:2px solid #8ab6df;border-color:#8ab6df;background:white}
+.task-input{min-width:210px;font-weight:600}.task-input.important-task{color:#800000;font-weight:700}.task-cell{display:flex;align-items:center;gap:9px}.status-symbols{display:inline-flex;gap:3px;flex-shrink:0}.status-symbols button{border:1px solid transparent;background:transparent;border-radius:6px;padding:4px 6px;font-size:15px;line-height:1;min-width:27px}.status-symbols button:hover{background:#f0f3f7}.status-symbols button.selected{border-color:#cbd5e1;background:#eef2f7}.status-symbols button[data-status="In Progress"].selected{background:#e5f0fc;border-color:#9fc5eb}.status-symbols button[data-status="Completed"].selected{background:#e5f3e9;border-color:#a6d5b5}
+.eta-input{min-width:135px}.archive-action,.complete-action,.delete-action,.important-action{border:1px solid #d7dee8;background:#fff;color:#263449;border-radius:6px;padding:5px 8px;cursor:pointer;min-width:30px}.archive-action:hover,.complete-action:hover,.delete-action:hover,.important-action:hover{background:#eef3f8}.archive-action:disabled{opacity:.4;cursor:not-allowed;background:#fff}.record-actions{white-space:nowrap}.complete-action,.delete-action{margin-left:5px}.action-dates{margin-top:5px;color:#687386;font-size:10px;line-height:1.45;white-space:normal;min-width:150px}
+.owner-row td{background:#eef4fa;color:#244b70;font-weight:700;padding:9px 13px}.group-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}.group-add{border:1px solid #cbd3df;background:#fff;color:#263449;border-radius:6px;width:27px;height:25px;padding:0;font-size:18px;line-height:1}.inline-add-row td{background:#f8fbff}.inline-add-row input,.inline-add-row select{width:100%;min-width:95px;border:1px solid #cbd3df;border-radius:5px;padding:7px 6px;font-size:13px}.inline-add-actions{white-space:nowrap}.inline-add-actions button{padding:5px 8px;margin-right:4px}
+.task{font-weight:600}.muted{color:#758195}.status{display:inline-block;border-radius:20px;padding:4px 8px;font-size:11px;background:#eef1f5}
+.status.Not-Started{background:#eef1f5;color:#566273}.status.In-Progress{background:#e7f1fb;color:#205b91}.status.Blocked{background:#fdeaea;color:#a12d2d}.status.Completed{background:#e7f5eb;color:#267044}
+tr.task-row.Not-Started td{background:#e5e9ee}tr.task-row.In-Progress td{background:#dceafa}tr.task-row.Completed td{background:#dcefe1}tr.task-row.rahul-row td{background:#eee5fa}tr.task-row td{transition:background .15s ease}tr.task-row .cell-input{background:transparent}tr.task-row .cell-input:focus{background:white}
+.overdue{color:#b42318;font-weight:700}.actions{white-space:nowrap}.actions button{padding:5px 8px;margin-right:4px}
+.empty{text-align:center;padding:35px;color:#687386}
+dialog{border:0;border-radius:14px;padding:0;width:min(520px,calc(100% - 28px));box-shadow:0 20px 60px #15223833}
+dialog::backdrop{background:#14203366}.modal{padding:20px}.modal h2{margin:0 0 16px;font-size:19px}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.field{display:flex;flex-direction:column;gap:5px}.field.full{grid-column:1/-1}.field label{font-size:12px;color:#536174;font-weight:600}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.note{font-size:12px;color:#687386;margin:13px 2px}
+@media(max-width:650px){body{padding:14px}.stats{grid-template-columns:1fr 1fr}.fields{grid-template-columns:1fr}.field.full{grid-column:auto}h1{font-size:21px}}
+</style>
+</head>
+<body>
+<main>
+<header>
+ <div><h1>My Tracker</h1></div>
+ <div class="toolbar">
+  <button id="exportBtn">Export backup</button>
+  <button id="importBtn">Import backup</button>
+  <button id="archiveToggle">View Archive (0)</button>
+  <button class="primary" id="addBtn">+ Add task</button>
+  <input type="file" id="importFile" accept=".json,application/json" hidden>
+ </div>
+</header>
+<section class="stats">
+ <div class="stat"><strong id="totalCount">0</strong><span>Total tasks</span></div>
+ <div class="stat"><strong id="activeCount">0</strong><span>Open tasks</span></div>
+ <div class="stat"><strong id="overdueCount">0</strong><span>Overdue tasks</span></div>
+</section>
+<section class="panel" style="margin-bottom:14px">
+ <div id="viewLabel" style="font-weight:700;margin-bottom:10px">Active tasks</div>
+ <div class="toolbar" style="margin:0">
+  <input id="search" placeholder="Search task or project…" aria-label="Search">
+  <select id="ownerFilter"><option value="">All owners</option></select>
+  <select id="projectFilter"><option value="">All projects</option></select>
+  <select id="sortBy" aria-label="Sort by"><option value="project">Group by project, then owner</option><option value="owner">Group by owner</option><option value="eta">Sort by ETA</option></select>
+ </div>
+</section>
+<div class="table-wrap">
+<table>
+ <thead><tr><th>Project</th><th>Owner</th><th>Task</th><th>ETA</th><th>Actions</th></tr></thead>
+ <tbody id="taskRows"></tbody>
+</table>
+<div class="empty" id="emptyState" hidden>No tasks match. Add a task or change your filters.</div>
+</div>
+<p class="note">Changes save automatically in this browser. Export a backup regularly; clearing browser data or changing devices can remove locally saved tasks.</p>
+</main>
+
+<dialog id="taskDialog">
+<form class="modal" id="taskForm">
+ <h2 id="dialogTitle">Add task</h2>
+ <input type="hidden" id="taskId">
+ <div class="fields">
+  <div class="field"><label for="project">Project</label><select id="project" required></select></div>
+  <div class="field"><label for="owner">Owner</label><select id="owner" required></select></div>
+  <div class="field full"><label for="task">Task</label><textarea id="task" rows="2" required placeholder="Describe the task"></textarea></div>
+  <div class="field"><label for="eta">ETA</label><input id="eta" type="date"></div>
+ </div>
+ <div class="modal-actions"><button type="button" id="cancelBtn">Cancel</button><button class="primary" type="submit">Save task</button></div>
+</form>
+</dialog>
+<script>
+const KEY='simpleProjectTaskTracker.v1';
+const DEFAULT_OWNERS=['Srideep','Dileep','Seema','Rohit','Shailja','Pranav','Yash','Deepak','Karthik','Kaavya'];
+const DEFAULT_PROJECTS=['Mashreq','Siemens MPC','Siemens MOP'];
+const starter=[
+ {project:'Mashreq',owner:'Rahul',task:'Update LLD with Vmware scope',status:'Not Started',eta:''},
+ {project:'Mashreq',owner:'Kaavya',task:'iProc Process update',status:'Not Started',eta:''},
+ {project:'Mashreq',owner:'Kaavya',task:'Provide updated SOPs',status:'Not Started',eta:''},
+ {project:'MOP',owner:'Rahul',task:'Work on BYS SSR shared by Mohan',status:'Not Started',eta:''},
+ {project:'MPC',owner:'Rahul',task:'Work on AKS requirement doc',status:'Not Started',eta:''},
+ {project:'MPC',owner:'Srideep',task:'Work on Firewall SSR - Import function',status:'Not Started',eta:''},
+ {project:'MPC',owner:'Srideep',task:'Work on PIM SSR',status:'Not Started',eta:''},
+ {project:'MOP',owner:'Dileep',task:'Assess how many SSRs are impacted due to myIT Auth method change',status:'Not Started',eta:''},
+ {project:'MOP',owner:'Dileep',task:'DC Housing go-live and rename TAB',status:'Not Started',eta:''},
+ {project:'MOP',owner:'Dileep',task:'New API endpoint for CI updates',status:'Not Started',eta:''},
+ {project:'Mashreq',owner:'Seema',task:'TXCore CI/CD Demo on OCP',status:'Not Started',eta:''},
+ {project:'Mashreq',owner:'Product Team',task:'Approval via Email Link',status:'Not Started',eta:''},
+ {project:'Mashreq',owner:'Product Team',task:'Approval Reminder Emails',status:'Not Started',eta:''},
+ {project:'Mashreq',owner:'Product Team',task:'AD Sync for RM details',status:'Not Started',eta:''}
+];
+let tasks=[];
+try{const saved=localStorage.getItem(KEY);tasks=saved?JSON.parse(saved):starter.map((x,i)=>({...x,id:String(i+1)}));}catch(e){tasks=starter.map((x,i)=>({...x,id:String(i+1)}));}
+tasks=tasks.map(t=>({...t,status:t.status==='Blocked'?'Not Started':(t.status||'Not Started'),reportedOn:t.reportedOn||''}));
+let nextId=Math.max(0,...tasks.map(t=>Number(t.id)||0))+1;
+let showingArchive=false;
+let inlineDraft=null;
+const $=id=>document.getElementById(id);
+const save=()=>localStorage.setItem(KEY,JSON.stringify(tasks));
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const dateLabel=s=>s?new Date(s+'T00:00:00').toLocaleDateString(undefined,{day:'2-digit',month:'short',year:'numeric'}):'—';
+const actionDateLabel=s=>s?new Date(s).toLocaleString(undefined,{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+function choiceOptions(kind,current){
+ const defaults=kind==='owner'?DEFAULT_OWNERS:DEFAULT_PROJECTS;
+ const field=kind==='owner'?'owner':'project';
+ const values=[...new Set([...defaults,...tasks.map(t=>t[field]).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
+ return values.map(v=>`<option value="${esc(v)}" ${v===current?'selected':''}>${esc(v)}</option>`).join('')+'<option value="__new__">+ Add new…</option>';
+}
+function refreshFilters(){
+ const owners=[...new Set([...DEFAULT_OWNERS,...tasks.map(t=>t.owner).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
+ const projects=[...new Set([...DEFAULT_PROJECTS,...tasks.map(t=>t.project).filter(Boolean)])].sort((a,b)=>a.localeCompare(b));
+ const keepOwner=$('ownerFilter').value,keepProject=$('projectFilter').value;
+ $('ownerFilter').innerHTML='<option value="">All owners</option>'+owners.map(x=>`<option>${esc(x)}</option>`).join('');
+ $('projectFilter').innerHTML='<option value="">All projects</option>'+projects.map(x=>`<option>${esc(x)}</option>`).join('');
+ $('ownerFilter').value=owners.includes(keepOwner)?keepOwner:'';
+ $('projectFilter').value=projects.includes(keepProject)?keepProject:'';
+ const prevOwner=$('owner').value,prevProject=$('project').value;
+ $('owner').innerHTML='<option value="">Select owner</option>'+choiceOptions('owner','');
+ $('project').innerHTML='<option value="">Select project</option>'+choiceOptions('project','');
+ if(owners.includes(prevOwner))$('owner').value=prevOwner;
+ if(projects.includes(prevProject))$('project').value=prevProject;
+}
+function resolveNewChoice(selectId,kind){
+ const el=$(selectId);
+ if(el.value!=='__new__')return;
+ const entered=prompt('Enter new '+kind+' name:');
+ if(entered&&entered.trim()){
+  const value=entered.trim();
+  const defaults=kind==='owner'?DEFAULT_OWNERS:DEFAULT_PROJECTS;
+  if(!defaults.includes(value))defaults.push(value);
+  const option=document.createElement('option');option.value=value;option.textContent=value;
+  const custom=el.querySelector('option[value="__new__"]');el.insertBefore(option,custom);el.value=value;
+ }else el.value='';
+}
+$('owner').addEventListener('change',()=>resolveNewChoice('owner','owner'));
+$('project').addEventListener('change',()=>resolveNewChoice('project','project'));
+function render(){
+ refreshFilters();
+ const today=new Date();today.setHours(0,0,0,0);
+ const overdue=tasks.filter(t=>t.eta&&new Date(t.eta+'T00:00:00')<today&&t.status!=='Completed').length;
+ $('totalCount').textContent=tasks.length;
+ $('activeCount').textContent=tasks.filter(t=>!t.archived&&t.status!=='Completed').length;
+ $('overdueCount').textContent=overdue;
+ const archivedCount=tasks.filter(t=>t.archived).length;
+ $('archiveToggle').textContent=(showingArchive?'← Back to Active':'View Archive')+' ('+archivedCount+')';
+ $('viewLabel').textContent=showingArchive?'Archived tasks':'Active tasks';
+ let rows=tasks.filter(t=>(!!t.archived===showingArchive)&&(!$('ownerFilter').value||t.owner===$('ownerFilter').value)&&(! $('projectFilter').value||t.project===$('projectFilter').value)&&(`${t.project} ${t.owner} ${t.task}`.toLowerCase().includes($('search').value.toLowerCase())));
+ const mode=$('sortBy').value;
+ rows.sort((a,b)=>{let x,y;if(mode==='project'){x=a.project;y=b.project;}else if(mode==='eta'){x=a.eta||'9999';y=b.eta||'9999';}else{x=a.owner;y=b.owner;}return x.localeCompare(y)||a.project.localeCompare(b.project)||a.owner.localeCompare(b.owner)||a.task.localeCompare(b.task);});
+ const body=$('taskRows');body.innerHTML='';
+ let last='';
+ rows.forEach(t=>{
+  if(mode!=='eta'){const group=mode==='project'?t.project:t.owner;if(group!==last){last=group;const tr=document.createElement('tr');tr.className='owner-row';tr.innerHTML=`<td colspan="5"><div class="group-heading"><span>${mode==='project'?'Project':'Owner'}: ${esc(group)}</span>${showingArchive?'':`<button type="button" class="group-add" data-add-group="${esc(group)}" title="Add a task to this ${mode} section" aria-label="Add task to this section">+</button>`}</div></td>`;body.appendChild(tr);if(inlineDraft&&inlineDraft.mode===mode&&inlineDraft.group===group&&!showingArchive){const draftRow=document.createElement('tr');draftRow.className='inline-add-row';draftRow.innerHTML=`<td>${mode==='project'?`<input value="${esc(inlineDraft.project)}" disabled aria-label="Project">`:`<select data-inline-field="project">${choiceOptions('project',inlineDraft.project)}</select>`}</td><td>${mode==='owner'?`<input value="${esc(inlineDraft.owner)}" disabled aria-label="Owner">`:`<select data-inline-field="owner">${choiceOptions('owner',inlineDraft.owner)}</select>`}</td><td><input data-inline-field="task" placeholder="Enter task…" value="${esc(inlineDraft.task)}" aria-label="Task"></td><td><input data-inline-field="eta" type="date" value="${esc(inlineDraft.eta)}" aria-label="ETA"></td><td class="inline-add-actions"><button type="button" class="primary" data-inline-save>Save</button><button type="button" data-inline-cancel title="Cancel">×</button></td>`;body.appendChild(draftRow);}}}
+  const tr=document.createElement('tr');tr.className='task-row '+t.status.replaceAll(' ','-')+(String(t.owner).trim().toLowerCase()==='rahul'?' rahul-row':'');
+  const isLate=t.eta&&new Date(t.eta+'T00:00:00')<today&&t.status!=='Completed';
+  tr.innerHTML=`<td><select class="cell-input project-select" data-id="${esc(t.id)}" data-field="project" aria-label="Project">${choiceOptions("project",t.project)}</select></td><td><select class="cell-input owner-select" data-id="${esc(t.id)}" data-field="owner" aria-label="Owner">${choiceOptions("owner",t.owner)}</select></td><td><div class="task-cell"><input class="cell-input task-input ${t.important?'important-task':''}" data-id="${esc(t.id)}" data-field="task" aria-label="Task" value="${esc(t.task)}"></div></td><td><input class="cell-input eta-input ${isLate?'overdue':''}" data-id="${esc(t.id)}" data-field="eta" aria-label="ETA" type="date" value="${esc(t.eta||'')}"></td><td class="record-actions"><button type="button" class="archive-action" data-archive-id="${esc(t.id)}" title="${showingArchive?'Restore task':(t.status==='Completed'?'Archive task':'Complete task before archiving')}" ${!showingArchive&&t.status!=='Completed'?'disabled':''}>${showingArchive?'↩':'▣'}</button><button type="button" class="complete-action" data-complete-id="${esc(t.id)}" title="${t.status==='Completed'?'Reopen task':'Mark task completed'}" aria-label="${t.status==='Completed'?'Reopen task':'Mark task completed'}">${t.status==='Completed'?'↶':'✓'}</button><button type="button" class="important-action" data-important-id="${esc(t.id)}" title="${t.important?'Remove important mark':'Mark task important'}" aria-label="${t.important?'Remove important mark':'Mark task important'}">${t.important?'⚑':'⚐'}</button><button type="button" class="delete-action" data-delete-id="${esc(t.id)}" title="Permanently delete task" aria-label="Permanently delete task">✕</button><div class="action-dates">${t.completedAt?`Completed: ${esc(actionDateLabel(t.completedAt))}<br>`:''}${t.archivedAt?`Archived: ${esc(actionDateLabel(t.archivedAt))}`:''}</div></td>`;
+  body.appendChild(tr);
+ });
+ $('emptyState').hidden=rows.length!==0;
+}
+function openForm(t){
+ $('taskForm').reset();$('taskId').value=t?.id||'';
+ $('dialogTitle').textContent=t?'Edit task':'Add task';
+ if(t){$('project').value=t.project;$('owner').value=t.owner;$('task').value=t.task;$('eta').value=t.eta||'';}
+ $('taskDialog').showModal();
+}
+$('addBtn').onclick=()=>openForm();
+$('cancelBtn').onclick=()=>$('taskDialog').close();
+$('taskForm').onsubmit=e=>{
+ e.preventDefault();const id=$('taskId').value;
+ const existing=id?tasks.find(t=>t.id===id):null;
+ const item={...(existing||{}),id:id||String(nextId++),project:$('project').value.trim(),owner:$('owner').value.trim(),task:$('task').value.trim(),status:existing?.status||'Not Started',eta:$('eta').value};
+ if(id)tasks=tasks.map(t=>t.id===id?item:t);else tasks.push(item);
+ save();$('taskDialog').close();render();
+};
+$('taskRows').addEventListener('input',e=>{
+ if(e.target.dataset.inlineField){inlineDraft[e.target.dataset.inlineField]=e.target.value;}
+});
+$('taskRows').addEventListener('change',e=>{
+ if(e.target.dataset.inlineField){
+  const field=e.target.dataset.inlineField;
+  let value=e.target.value;
+  if(value==='__new__'){
+   const entered=prompt('Enter new '+(field==='owner'?'owner':'project')+' name:');
+   if(!entered||!entered.trim()){render();return;}
+   value=entered.trim();
+   const defaults=field==='owner'?DEFAULT_OWNERS:DEFAULT_PROJECTS;
+   if(!defaults.includes(value))defaults.push(value);
+  }
+  inlineDraft[field]=value;
+  render();
+  return;
+ }
+ const field=e.target.dataset.field,id=e.target.dataset.id;
+ if(!field||!id)return;
+ const item=tasks.find(t=>t.id===id);if(!item)return;
+ let value=e.target.value;
+ if(value==='__new__'){
+  const entered=prompt('Enter new '+(field==='owner'?'owner':'project')+' name:');
+  if(!entered||!entered.trim()){render();return;}
+  value=entered.trim();
+  const defaults=field==='owner'?DEFAULT_OWNERS:DEFAULT_PROJECTS;
+  if(!defaults.includes(value))defaults.push(value);
+ }
+ item[field]=value.trim();
+ save();
+ if(field==='owner'||field==='project'||field==='eta'||field==='status')render();
+});
+$('taskRows').onclick=e=>{
+ const addGroup=e.target.closest('[data-add-group]');
+ const inlineSave=e.target.closest('[data-inline-save]');
+ const inlineCancel=e.target.closest('[data-inline-cancel]');
+ if(addGroup){
+  const mode=$('sortBy').value,group=addGroup.dataset.addGroup;
+  inlineDraft={mode,group,project:mode==='project'?group:'',owner:mode==='owner'?group:'',task:'',eta:''};
+  render();
+  $('taskRows').querySelector('[data-inline-field="task"]')?.focus();
+  return;
+ }
+ if(inlineCancel){inlineDraft=null;render();return;}
+ if(inlineSave){
+  const d=inlineDraft;
+  if(!d||!d.project||!d.owner||!d.task.trim()){alert('Please enter a project, owner, and task.');return;}
+  tasks.push({id:String(nextId++),project:d.project,owner:d.owner,task:d.task.trim(),eta:d.eta||'',status:'Not Started'});
+  inlineDraft=null;save();render();return;
+ }
+ const complete=e.target.closest('[data-complete-id]');
+ const archive=e.target.closest('[data-archive-id]');
+ const del=e.target.closest('[data-delete-id]');
+ const important=e.target.closest('[data-important-id]');
+ if(important){
+  const item=tasks.find(t=>t.id===important.dataset.importantId);
+  if(item){item.important=!item.important;save();render();}
+ }
+ if(complete){
+  const item=tasks.find(t=>t.id===complete.dataset.completeId);
+  if(item){if(item.status==='Completed'){item.status='Not Started';item.completedAt='';}else{item.status='Completed';item.completedAt=new Date().toISOString();}save();render();}
+ }
+ if(archive){
+  const item=tasks.find(t=>t.id===archive.dataset.archiveId);
+  if(item){if(showingArchive){item.archived=false;item.archivedAt='';}else if(item.status==='Completed'){item.archived=true;item.archivedAt=new Date().toISOString();}else{return;}save();render();}
+ }
+ if(del){
+  const item=tasks.find(t=>t.id===del.dataset.deleteId);
+  if(item&&confirm('Permanently delete this task? This cannot be undone.')){
+   tasks=tasks.filter(t=>t.id!==item.id);save();render();
+  }
+ }
+};
+$('archiveToggle').onclick=()=>{showingArchive=!showingArchive;render();};
+['search','ownerFilter','projectFilter','sortBy'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',render));
+$('exportBtn').onclick=()=>{
+ const blob=new Blob([JSON.stringify(tasks,null,2)],{type:'application/json'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='project-task-tracker-backup.json';a.click();URL.revokeObjectURL(a.href);
+};
+$('importBtn').onclick=()=>$('importFile').click();
+$('importFile').onchange=async e=>{
+ const file=e.target.files[0];if(!file)return;
+ try{const parsed=JSON.parse(await file.text());if(!Array.isArray(parsed)||!parsed.every(t=>t.project&&t.owner&&t.task))throw Error('Invalid file');
+  if(confirm('Import will replace the tasks currently stored in this browser. Continue?')){tasks=parsed.map((t,i)=>({...t,id:String(t.id||i+1),status:t.status==='Blocked'?'Not Started':(t.status||'Not Started'),reportedOn:t.reportedOn||'',eta:t.eta||'',archived:!!t.archived,completedAt:t.completedAt||'',archivedAt:t.archivedAt||''}));nextId=Math.max(0,...tasks.map(t=>Number(t.id)||0))+1;save();render();}
+ }catch(err){alert('Could not import this backup. Please choose a valid tracker JSON file.');}
+ e.target.value='';
+};
+save();render();
+</script>
+</body>
+</html>
